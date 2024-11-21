@@ -194,7 +194,6 @@ console.log("counter.num = ",count.num)
 
 ```
 
-需要注意的是，这个地方反序列化的过程中 counter 以 new Counter(deseralize_obj:{num:number}) 的形式接收返回的数据，因此前面的构造方法中，我们需要设置哈希表形式的入参。
 
 ![alt text](image-4.png)
 
