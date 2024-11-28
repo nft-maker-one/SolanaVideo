@@ -340,3 +340,182 @@ sign(...signers) {
     this._partialSign(message, ...uniqueSigners);
   }
 ```
+
+#### 多笔交易下的多次计数
+```typescript
+class Counter {
+  num:number
+  constructor(fields:{num:number}|undefined=undefined) {
+    if (fields) {
+      this.num = fields.num;
+    } 
+  }
+}
+
+const Schema = new Map([
+  [Counter,{kind:"struct",fields:[["num","u32"]]}]
+])
+
+const space = borsh.serialize(Schema,new Counter()).length
+const lamports = await pg.connection.getMinimumBalanceForRentExemption(space);
+const keypair = pg.wallet.keypair;
+
+
+console.log("space = ",space)
+console.log("lamports = ",lamports)
+
+const tx = new web3.Transaction()
+
+
+const createAccountTxIs = web3.SystemProgram.createAccount({
+  fromPubkey:pg.wallet.publicKey,
+  newAccountPubkey:keypair.publicKey,
+  space,
+  lamports,
+  programId:pg.PROGRAM_ID
+})
+
+const txIs = new web3.TransactionInstruction({
+  keys:[
+    {pubkey:keypair.publicKey,isSigner:false,isWritable:true}
+  ],
+  programId:pg.PROGRAM_ID
+})
+
+tx.add(createAccountTxIs,txIs,txIs,txIs)
+
+const txHash = await web3.sendAndConfirmTransaction(pg.connection,tx,[pg.wallet.keypair,keypair])
+console.log("txHash = ",txHash)
+
+const tx1 = new web3.Transaction()
+const txIs1 = new web3.TransactionInstruction({
+  keys:[
+    {pubkey:keypair.publicKey,isSigner:true,isWritable:true}
+  ],
+  programId:pg.PROGRAM_ID
+})
+const transferIs = web3.SystemProgram.transfer({
+  fromPubkey:pg.wallet.keypair.publicKey,
+  toPubkey:keypair.publicKey,
+  lamports:web3.LAMPORTS_PER_SOL/2
+})
+
+tx1.add(txIs1,transferIs)
+
+const txHash1 = await web3.sendAndConfirmTransaction(pg.connection,tx1,[pg.wallet.keypair,keypair])
+
+console.log("pubkey = ",keypair.publicKey.toString());
+console.log("txHash1 = ",txHash1)
+
+const tx2 = new web3.Transaction()
+tx2.add(txIs1)
+const txHash2 = await web3.sendAndConfirmTransaction(pg.connection,tx2,[keypair])
+
+let account = await pg.connection.getAccountInfo(keypair.publicKey)
+const counter = borsh.deserialize(Schema,Counter,account.data);
+console.log("counter.num = ",counter.num);
+
+
+
+```
+
+#### solana 账户所有权模型
+solana 中任何账户都归某个合约所有，而不能独立存在。我们常用来交易的账户归 SystemProgram 所有，只有它才支持 Solana 的转账交易。当我们和某个合约(program)交互之前
+必须先建立一个该合约所有的委托账户，通过委托账户才可以与该合约交互。
+
+![alt text](image-6.png)  
+区块浏览器中账户所有权的展示
+
+
+
+## rust 基本语法
+[vs build](https://visualstudio.microsoft.com/zh-hans/downloads/?mode=dark)
+
+[rustup download](https://www.rust-lang.org/zh-CN/tools/install)
+
+### 类型推断
+```rust
+let a = 34;
+let b:u8 = 12;
+let c = "xxxx";
+let d = String::from("xxxx");
+
+```
+
+### 可变修饰符
+```rust
+let age = 32;
+// age = 23;  报错
+let mut money = 100
+let money = 220
+
+```
+
+
+### 引用
+```rust
+pub fn main() {
+    let mut hobby1 = String::from("football");
+    let hobby2 = &mut hobby1;
+    // let hobby3 = &hobby1
+    println!("hobby1 =  hobby2 = {} hobby3 = ",hobby2);
+}
+```
+
+### 作用域
+```rust
+let animal1 = String::from("car");
+{
+    let animal2 = &animal1;
+}
+println!("animal2 = {}",animal);
+```
+
+### mod
+### 同文件下的mod调用
+```rust
+mod sports {
+    pub fn do_sports(s:String) {
+        println!("I lke {}",s)
+    }
+}
+
+sports::do_sports(String::from("ping-pong"));
+```
+### 不同文件下的mod调用
+文件目录
+- src
+  - main.rs
+  - college
+    - mod.rs
+    - student.rs
+
+
+```rust
+// mod.rs
+pub mod student;
+```
+```rust
+// student.rs
+pub struct Student {
+    pub name:String,
+    pub age:u32
+}
+
+impl Student {
+    pub fn new(name:String,age:u32) -> Student {
+        Student {name:name,age:age}
+    }
+
+    pub fn show_msg(&self){
+        println!("name {} age {}",self.name,self.age);
+    }
+}
+```
+```rust
+// main.rs
+pub fn main() {
+  let s = college::student::Student::new(String::from("张三"),17);
+  s.show_msg();
+}
+```
