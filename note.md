@@ -576,9 +576,78 @@ fn main() {
 ```
 
 
+### 客户端请求代码
+```javascript
+const web3 = require("@solana/web3.js");
+const { randomInt } = require("crypto");
+const fs = require("fs")
+const PROGRAM = new web3.PublicKey("9HBtwrPSMi1gVFLt82oR8DVXtyfAFrpe1ePdvA9hsAoC")
+const RPC = ""
 
-## spl20 代币
-### 原理讲解
-![alt text](<mermaid-2025627 224359.png>) 
+/**
+ * 
+ * @param {Array<Number>} amounts 
+ * @returns {Uint8Array}
+ */
+function constructBatchTransferIns(amounts) {
+    const data = new Uint8Array(1+amounts.length*8);
+    data[0]=amounts.length
+    for (let i=0;i<amounts.length;i++) {
+        new DataView(data.buffer).setBigUint64(1+i*8,BigInt(amounts[i]),true)
+    }
+    return data
+}
 
-![alt text](<mermaid-2025627 224635.png>)
+async function batch_transfer(payerPath,num) {
+    let receivers = []
+    const connection = new web3.Connection(RPC)
+    for (let i=0;i<num;i++) {
+        const new_key = web3.Keypair.generate()
+       fs.writeFileSync(`./keys/receivers_${i}.json`,JSON.stringify({
+        pubkey:new_key.publicKey.toBase58(),
+        secretKey:new_key.secretKey.toString()
+       }))
+        receivers.push(new_key)
+    }
+    const payer = web3.Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(payerPath).toString())))
+    let amounts = []
+    for (let i=0;i<num;i++) {
+        amounts.push(10000000+randomInt(100000))
+    }
+    console.log("转账数额")
+    console.log(amounts)
+    const ins_data = constructBatchTransferIns(amounts)
+    let account_infos=[];
+    account_infos.push({
+        isWritable:false,
+        pubkey:web3.SystemProgram.programId,
+        isSigner:false
+    })
+    for (let i=0;i<num;i++) {
+        account_infos.push({
+            isWritable:true,
+            pubkey:receivers[i].publicKey,
+            isSigner:false
+        })
+    }
+    const tx = new web3.Transaction().add(new web3.TransactionInstruction({
+        programId:PROGRAM,
+        data:ins_data,
+        keys:[
+            {
+                isWritable:true,
+                isSigner:true,
+                pubkey:payer.publicKey
+            },
+            ...account_infos
+        ]
+    }))
+    const txid = await web3.sendAndConfirmTransaction(connection,tx,[payer])
+    console.log(txid)
+
+}
+
+batch_transfer("payer.json",5)
+
+
+```
