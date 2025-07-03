@@ -578,76 +578,112 @@ fn main() {
 
 ### 客户端请求代码
 ```javascript
-const web3 = require("@solana/web3.js");
-const { randomInt } = require("crypto");
+const { Connection, Keypair, PublicKey, Transaction, SystemProgram } = require('@solana/web3.js');
+
+const PROGRAM_ID = new PublicKey('A8REX9XVHbDJzHN3rnsxjLsd6YXfEqFUJAKTXTYckw5');
+
 const fs = require("fs")
-const PROGRAM = new web3.PublicKey("9HBtwrPSMi1gVFLt82oR8DVXtyfAFrpe1ePdvA9hsAoC")
-const RPC = ""
+const dotenv = require('dotenv');
+dotenv.config();
+const rpc = process.env.RPC_URL;
+const connection = new Connection(rpc, 'confirmed');
 
-/**
- * 
- * @param {Array<Number>} amounts 
- * @returns {Uint8Array}
- */
-function constructBatchTransferIns(amounts) {
-    const data = new Uint8Array(1+amounts.length*8);
-    data[0]=amounts.length
-    for (let i=0;i<amounts.length;i++) {
-        new DataView(data.buffer).setBigUint64(1+i*8,BigInt(amounts[i]),true)
-    }
-    return data
-}
-
-async function batch_transfer(payerPath,num) {
-    let receivers = []
-    const connection = new web3.Connection(RPC)
-    for (let i=0;i<num;i++) {
-        const new_key = web3.Keypair.generate()
-       fs.writeFileSync(`./keys/receivers_${i}.json`,JSON.stringify({
-        pubkey:new_key.publicKey.toBase58(),
-        secretKey:new_key.secretKey.toString()
-       }))
-        receivers.push(new_key)
-    }
-    const payer = web3.Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(payerPath).toString())))
-    let amounts = []
-    for (let i=0;i<num;i++) {
-        amounts.push(10000000+randomInt(100000))
-    }
-    console.log("转账数额")
-    console.log(amounts)
-    const ins_data = constructBatchTransferIns(amounts)
-    let account_infos=[];
-    account_infos.push({
-        isWritable:false,
-        pubkey:web3.SystemProgram.programId,
-        isSigner:false
-    })
-    for (let i=0;i<num;i++) {
-        account_infos.push({
-            isWritable:true,
-            pubkey:receivers[i].publicKey,
-            isSigner:false
-        })
-    }
-    const tx = new web3.Transaction().add(new web3.TransactionInstruction({
-        programId:PROGRAM,
-        data:ins_data,
-        keys:[
-            {
-                isWritable:true,
-                isSigner:true,
-                pubkey:payer.publicKey
-            },
-            ...account_infos
-        ]
+async function main() {
+    const payer = Keypair.fromSecretKey(Uint8Array.from([]));
+    console.log(payer.publicKey.toBase58())
+    const source = Keypair.generate();
+    const destination = Keypair.generate();
+    fs.writeFileSync('./payer.json', JSON.stringify({
+        pubkey:payer.publicKey.toBase58(),
+        privatekey:payer.secretKey.toString()
     }))
-    const txid = await web3.sendAndConfirmTransaction(connection,tx,[payer])
-    console.log(txid)
+    fs.writeFileSync('./source.json', JSON.stringify({
+        pubkey:source.publicKey.toBase58(),
+        privatekey:source.secretKey.toString()
+    }))
+    fs.writeFileSync('./destination.json', JSON.stringify({
+        pubkey:destination.publicKey.toBase58(),
+        privatekey:destination.secretKey.toString()
+    }))
+    
+    // console.log('请求空投...');
+    // const airdropSig = await connection.requestAirdrop(payer.publicKey, 5e8);
+    // await connection.confirmTransaction(airdropSig);
 
+    console.log('创建并初始化源账户...');
+    const space = 8; // TokenAccount 需要 8 字节 (u64)
+    const rentExemptionAmount = await connection.getMinimumBalanceForRentExemption(space);
+    const initSourceTx = new Transaction().add(
+        SystemProgram.createAccount({
+            fromPubkey: payer.publicKey,
+            newAccountPubkey: source.publicKey,
+            lamports: rentExemptionAmount,
+            space: space,
+            programId: PROGRAM_ID,
+        }),
+        {
+            programId: PROGRAM_ID,
+            keys: [{ pubkey: source.publicKey, isSigner: true, isWritable: true }],
+            data: Buffer.from([0]), // InitializeAccount 指令标签
+        }
+    );
+    await connection.sendTransaction(initSourceTx, [payer, source]);
+
+    console.log('创建并初始化目标账户...');
+    const initDestTx = new Transaction().add(
+        SystemProgram.createAccount({
+            fromPubkey: payer.publicKey,
+            newAccountPubkey: destination.publicKey,
+            lamports: rentExemptionAmount,
+            space: space,
+            programId: PROGRAM_ID,
+        }),
+        {
+            programId: PROGRAM_ID,
+            keys: [{ pubkey: destination.publicKey, isSigner: true, isWritable: true }],
+            data: Buffer.from([0]),
+        }
+    );
+    await connection.sendTransaction(initDestTx, [payer, destination]);
+
+    console.log('铸造代币...');
+    const mintAmount = 100000;
+    const mintAmountBuffer = Buffer.alloc(8);
+    const dataView = new DataView(mintAmountBuffer.buffer);
+    dataView.setBigUint64(0, BigInt(mintAmount), true); // 小端序
+    const mintIxData = Buffer.concat([
+        Buffer.from([1]), // MintTo 指令标签
+        mintAmountBuffer,
+    ]);
+    const mintTx = new Transaction().add({
+        programId: PROGRAM_ID,
+        keys: [{ pubkey: source.publicKey, isSigner: true, isWritable: true }],
+        data: mintIxData,
+    });
+    await connection.sendTransaction(mintTx, [payer, source]);
+
+    console.log('转移代币...');
+    const transferAmount = 500000000;
+    const transferAmountBuffer = Buffer.alloc(8);
+    const transferDataView = new DataView(transferAmountBuffer.buffer);
+    transferDataView.setBigUint64(0, BigInt(transferAmount), true); // 小端序
+    const transferIxData = Buffer.concat([
+        Buffer.from([2]), // Transfer 指令标签
+        transferAmountBuffer,
+    ]);
+    const transferTx = new Transaction().add({
+        programId: PROGRAM_ID,
+        keys: [
+            { pubkey: source.publicKey, isSigner: true, isWritable: true },
+            { pubkey: destination.publicKey, isSigner: false, isWritable: true },
+        ],
+        data: transferIxData,
+    });
+    await connection.sendTransaction(transferTx, [payer, source],{
+        skipPreflight: true,
+    });
 }
 
-batch_transfer("payer.json",5)
-
+main().catch(console.error);
 
 ```
