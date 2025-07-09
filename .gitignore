@@ -1,6 +1,4 @@
-counter
-data_type
-hello_world
-spl_token
-rust_basic
-rust_impl
+*.md
+*.ps1
+!note.md
+*/target/
